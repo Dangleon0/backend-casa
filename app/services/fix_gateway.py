@@ -7,6 +7,9 @@ from ..db import SessionLocal
 from ..models import Order as OrderModel, Execution
 from ..utils.enums import OrderStatus
 from .events import SendOrderEvent, CancelOrderEvent
+# Fase 2.2 — EventBus y métricas
+from .event_bus import event_bus
+from .metrics import record
 
 
 class FixGateway:
@@ -51,6 +54,19 @@ class FixGateway:
             finally:
                 self.queue.task_done()
 
+    def _publish_update(self, order: OrderModel):
+        event_bus.publish(
+            f"orders.{order.client_id}",
+            {
+                "type": "ORDER_UPDATE",
+                "orderId": order.id,
+                "status": order.status,
+                "cumQty": order.cum_qty,
+                "avgPx": order.avg_px,
+            },
+        )
+        record("fix_events_processed", 1)
+
     def _process_send(self, order_id: str):
         with SessionLocal() as db:
             order = db.get(OrderModel, order_id)
@@ -63,12 +79,14 @@ class FixGateway:
             db.add(order)
             db.commit()
             print(f"[FIX] Order {order_id} → PENDING_SEND")
+            self._publish_update(order)
 
             time.sleep(0.2)  # simulate delay
             order.status = OrderStatus.SENT
             db.add(order)
             db.commit()
             print(f"[FIX] Order {order_id} → SENT")
+            self._publish_update(order)
 
             # Process fills
             remaining = order.qty - order.cum_qty
@@ -81,6 +99,7 @@ class FixGateway:
                 db.add(order)
                 db.commit()
                 print(f"[FIX] Order {order_id} → REJECTED")
+                self._publish_update(order)
                 return
 
             # Simulate fill or partial fill
@@ -101,6 +120,7 @@ class FixGateway:
             db.add(order)
             db.commit()
             print(f"[FIX] Order {order_id} filled {lot1} @ {px}")
+            self._publish_update(order)
 
             # If partial, finish later
             if order.cum_qty < order.qty:
@@ -114,6 +134,7 @@ class FixGateway:
                 db.add(order)
                 db.commit()
                 print(f"[FIX] Order {order_id} final fill {lot2} @ {px}")
+                self._publish_update(order)
 
     def _process_cancel(self, order_id: str):
         with SessionLocal() as db:
@@ -135,6 +156,7 @@ class FixGateway:
             db.add(order)
             db.commit()
             print(f"[FIX] Order {order_id} → CANCELED")
+            self._publish_update(order)
 
     def _mock_market_px(self, symbol: str) -> float:
         base = 2000.0 if symbol.upper().startswith("XAU") else 1.1000

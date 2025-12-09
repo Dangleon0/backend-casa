@@ -1,8 +1,12 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Float, DateTime, ForeignKey
+from sqlalchemy import String, Float, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
+
+# ------------------------------
+# Fase 2 — Nuevos modelos
+# ------------------------------
 
 class Order(Base):
     __tablename__ = "orders"
@@ -35,3 +39,15 @@ class Execution(Base):
     exec_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     order: Mapped[Order] = relationship("Order", back_populates="executions")
+
+# Fase 2.1 — Tabla de límites de riesgo
+class RiskLimit(Base):
+    __tablename__ = "risk_limits"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id: Mapped[str] = mapped_column(String, index=True)
+    symbol: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    max_notional: Mapped[float] = mapped_column(Float)
+    max_order_size: Mapped[float] = mapped_column(Float)
+    trading_hours: Mapped[str] = mapped_column(String)  # formato "HH:MM-HH:MM"
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
