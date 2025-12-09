@@ -1,14 +1,14 @@
 from collections import defaultdict
-from typing import Dict, List
-from sqlalchemy.orm import Session
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from ..models import Order, Execution
 from ..repositories.positions import PositionsRepository
 from ..utils.enums import OrderStatus
 
-# Fase 2.4 — Reconciliación interna
+# Fase 2.4 — Reconciliación interna (async)
 
-def reconcile_internal(db: Session) -> dict:
+async def reconcile_internal(db: AsyncSession) -> dict:
     """
     Verifica:
       - order.cum_qty == sum(executions)
@@ -18,22 +18,21 @@ def reconcile_internal(db: Session) -> dict:
     """
     orders_inconsistent: List[dict] = []
 
-    # Precompute sums of executions per order
     stmt_exec_sums = (
         select(Execution.order_id, func.sum(Execution.exec_qty).label("sum_exec"))
         .group_by(Execution.order_id)
     )
-    exec_sums = {row.order_id: float(row.sum_exec or 0.0) for row in db.execute(stmt_exec_sums)}
+    exec_rows = await db.execute(stmt_exec_sums)
+    exec_sums = {row.order_id: float(row.sum_exec or 0.0) for row in exec_rows}
 
-    # Check orders
-    orders = db.execute(select(Order)).scalars().all()
+    orders_result = await db.execute(select(Order))
+    orders = orders_result.scalars().all()
     for o in orders:
         s = float(exec_sums.get(o.id, 0.0))
         inco_reasons: List[str] = []
         if abs((o.cum_qty or 0.0) - s) > 1e-9:
             inco_reasons.append("CUM_QTY_MISMATCH")
 
-        # Coherence with qty and cum_qty
         qty = float(o.qty or 0.0)
         cum = float(o.cum_qty or 0.0)
         st = OrderStatus(o.status)
@@ -53,35 +52,23 @@ def reconcile_internal(db: Session) -> dict:
                 "reasons": inco_reasons,
             })
 
-    # Positions vs executions
-    positions_inconsistent: List[dict] = []
-    # Build positions from executions
-    # For each execution, sign depends on order side
-    # We need order sides for executions; join executions with orders
     stmt_exec_detail = select(
         Order.client_id, Order.symbol, Order.side, Execution.exec_qty, Execution.exec_px
     ).join(Execution, Execution.order_id == Order.id)
-    rows = db.execute(stmt_exec_detail).all()
+    rows = (await db.execute(stmt_exec_detail)).all()
 
     agg = defaultdict(float)
-    notional = defaultdict(float)
     for r in rows:
         sign = 1.0 if r.side == "BUY" else -1.0
         agg[(r.client_id, r.symbol)] += sign * float(r.exec_qty)
-        notional[(r.client_id, r.symbol)] += float(r.exec_qty) * float(r.exec_px)
 
-    # Repo positions
+    positions_inconsistent: List[dict] = []
     repo = PositionsRepository(db)
-    repo_pos = repo.by_client  # function
-
-    # Compare per client found
     clients = {cid for (cid, _sym) in agg.keys()}
     for cid in clients:
         calc = {(cid, sym): qty for (cid2, sym), qty in agg.items() if cid2 == cid}
-        # Convert repo list to mapping
-        repolist = repo_pos(cid)
+        repolist = await repo.by_client(cid)
         repo_map = {(p["clientId"], p["symbol"]): float(p["netQty"]) for p in repolist}
-        # Compare keys union
         keys = set(calc.keys()) | set(repo_map.keys())
         for key in keys:
             a = float(calc.get(key, 0.0))

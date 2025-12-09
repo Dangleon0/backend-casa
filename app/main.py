@@ -1,6 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 from .api import router
+from .db import init_db
 from .services.fix_gateway import fix_gateway
 # Fase 2.2 — WS router
 from .ws import ws_router
@@ -10,7 +11,8 @@ app = FastAPI(title="OMS Backend (MVP)")
 # Start FIX worker properly when FastAPI starts — THIS IS CRITICAL
 @app.on_event("startup")
 async def startup_event():
-    fix_gateway.start()
+    await init_db()
+    await fix_gateway.start()
 
 # Add API routes
 app.include_router(router)

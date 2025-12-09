@@ -1,12 +1,12 @@
 from sqlalchemy import select, func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Order, Execution
 
 class PositionsRepository:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
-    def by_client(self, client_id: str) -> list[dict]:
+    async def by_client(self, client_id: str) -> list[dict]:
         signed_qty = case(
             (Order.side == "BUY", Execution.exec_qty),
             else_=-Execution.exec_qty,
@@ -25,7 +25,7 @@ class PositionsRepository:
             .where(Order.client_id == client_id)
             .group_by(Order.client_id, Order.symbol)
         )
-        rows = self.db.execute(sub).all()
+        rows = (await self.db.execute(sub)).all()
         positions = []
         for r in rows:
             net_qty = float(r.netQty or 0)
