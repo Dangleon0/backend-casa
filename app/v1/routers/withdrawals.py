@@ -61,15 +61,18 @@ async def create_withdrawal_request(
     if _auto_approve_enabled():
         req.status = WithdrawalStatus.COMPLETED.value
 
+        # Agregar metadata de sandbox
         if req.metadata_ is None:
             req.metadata_ = {}
-        req.metadata_["stripe_transfer_id"] = f"tr_mock_{req.id}"
-        req.metadata_["auto_approved"] = True
+        req.metadata_['stripe_transfer_id'] = f"tr_mock_{req.id}"
+        req.metadata_['auto_approved'] = True
 
         await db.commit()
         await db.refresh(req)
+        
         logger.info(
-            f"🤖 [AUTO-APPROVE] Withdrawal {req.id} auto-completed (amount={req.amount} {req.currency})"
+            f"🤖 [AUTO-APPROVE] Withdrawal {req.id} auto-completed for sandbox "
+            f"(amount: {req.amount} {req.currency})"
         )
 
     return WithdrawalRequestOut.from_orm_row(req)

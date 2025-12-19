@@ -37,11 +37,20 @@ async def create_checkout_session(
     db: AsyncSession = Depends(get_session),
 ):
     client_id = client_id_header or "demo-client-1"
+    
+    # LOG: Ver qué deposit_id recibimos del frontend
+    print(f"🔍 [STRIPE CHECKOUT REQUEST] Received deposit_id={req.deposit_id} from frontend, client_id={client_id}")
+    
     repo = DepositIntentRepository(db)
 
     deposit = await repo.get_by_id(req.deposit_id, client_id)
     if not deposit:
+        print(f"❌ [STRIPE CHECKOUT] Deposit {req.deposit_id} NOT FOUND in database for client {client_id}")
         raise HTTPException(status_code=404, detail="Deposit not found")
+
+    # LOG: Ver qué amount tiene el deposit antes de crear Stripe Checkout
+    print(f"💳 [STRIPE CHECKOUT] Fetched from DB: deposit_id={deposit.id}, amount={deposit.amount} {deposit.currency}, status={deposit.status}, provider={deposit.provider}, client_id={client_id}")
+    print(f"📋 [STRIPE CHECKOUT DEBUG] Full deposit data: id={deposit.id}, amount={deposit.amount}, currency={deposit.currency}, payment_method={deposit.payment_method}, provider={deposit.provider}, status={deposit.status}, payment_url={deposit.payment_url}")
 
     if deposit.status != DepositStatus.PENDING.value:
         raise HTTPException(status_code=400, detail=f"Deposit is already {deposit.status}")
@@ -50,7 +59,9 @@ async def create_checkout_session(
         raise HTTPException(status_code=400, detail=f"Invalid deposit amount: {deposit.amount}")
 
     try:
+        # LOG: Calcular unit_amount antes de enviarlo a Stripe
         unit_amount = int(float(deposit.amount) * 100)
+        print(f"🧮 [STRIPE CHECKOUT] Calculated unit_amount: {deposit.amount} * 100 = {unit_amount} cents (${unit_amount / 100:.2f})")
 
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -80,6 +91,13 @@ async def create_checkout_session(
         deposit.status = DepositStatus.PROCESSING.value
         await db.commit()
         await db.refresh(deposit)
+
+        # LOG: Confirmar que se guardó correctamente
+        print(f"✅ [STRIPE CHECKOUT] Session created successfully:")
+        print(f"   - Stripe session_id: {session.id}")
+        print(f"   - Checkout URL: {session.url}")
+        print(f"   - Amount sent to Stripe: {unit_amount} cents (${unit_amount / 100:.2f})")
+        print(f"   - Updated deposit {deposit.id} with payment_url: {deposit.payment_url}")
 
         return CreateCheckoutResponse(checkout_url=session.url, session_id=session.id)
 

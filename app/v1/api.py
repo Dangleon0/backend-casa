@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from ..db import get_session
-from ..models import Withdrawal, DepositIntent
+from ..models import WithdrawalRequest, DepositIntent
 from .routers.deposits import router as deposits_router
 from .routers.stripe import router as stripe_router
 from .routers.withdrawals import router as withdrawals_router
@@ -40,9 +40,13 @@ async def dashboard(
         )
     ).scalar() or 0.0
 
+    # Solo contar retiros completados, no los pendientes o rechazados
     wd_sum = (
         await db.execute(
-            select(func.coalesce(func.sum(Withdrawal.amount), 0.0)).where(Withdrawal.client_id == client_id)
+            select(func.coalesce(func.sum(WithdrawalRequest.amount), 0.0)).where(
+                WithdrawalRequest.client_id == client_id,
+                WithdrawalRequest.status == "completed"
+            )
         )
     ).scalar() or 0.0
 

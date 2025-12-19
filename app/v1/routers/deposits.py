@@ -28,7 +28,11 @@ async def create_deposit_intent(
 ):
     client_id = _resolve_client_id(clientId, x_client_id)
 
-    logger.info(f"📥 [CREATE DEPOSIT] amount={payload.amount}, provider={payload.provider}, client_id={client_id}")
+    # LOG: Ver qué amount llega del frontend
+    logger.info(
+        f"📥 [CREATE DEPOSIT] Received from frontend: "
+        f"amount={payload.amount}, provider={payload.provider}, client_id={client_id}"
+    )
 
     repo = DepositIntentRepository(db)
     intent = await repo.create({
@@ -44,15 +48,31 @@ async def create_deposit_intent(
     await db.commit()
     await db.refresh(intent)
 
-    logger.info(f"💾 [CREATE DEPOSIT] Saved: deposit_id={intent.id}, amount={intent.amount}, provider={intent.provider}, payment_url={intent.payment_url}")
+    # LOG: Ver qué amount se guardó en la DB
+    logger.info(
+        f"💾 [CREATE DEPOSIT] Saved to DB: "
+        f"deposit_id={intent.id}, amount={intent.amount}, provider={intent.provider}, "
+        f"payment_url={intent.payment_url}"
+    )
 
-    # Auto-complete ONLY if provider == mock_stripe and sandbox enabled
+    # AUDIT LOG: Record deposit creation with full details for debugging
+    logger.info(
+        f"📊 [DEPOSIT AUDIT] client_id={client_id}, "
+        f"payload_amount={payload.amount}, saved_amount={intent.amount}, "
+        f"deposit_id={intent.id}, provider={intent.provider}, status={intent.status}"
+    )
+
+    # Auto-completar SOLO si provider es mock_stripe (permite usar Stripe real en paralelo)
     if payload.provider == "mock_stripe" and _is_sandbox():
         intent.status = DepositStatus.COMPLETED.value
         intent.confirmed_amount = intent.amount
         await db.commit()
         await db.refresh(intent)
-        logger.info(f"🤖 [AUTO-COMPLETE] Deposit {intent.id} completed in sandbox (client_id={client_id})")
+        
+        logger.info(
+            f"🤖 [AUTO-COMPLETE] Deposit {intent.id} auto-completed for sandbox "
+            f"(amount: {intent.amount} {intent.currency}, client_id: {client_id})"
+        )
 
     return DepositIntentOut.from_orm_row(intent)
 
